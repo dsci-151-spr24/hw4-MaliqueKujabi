@@ -1,6 +1,8 @@
 ---
 title: "HW 04 - Modeling the GSS"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 ```{r include = FALSE}
@@ -67,16 +69,42 @@ It's important that you don't recode the NAs, just the remaining levels.
 
 1.  Re-level the `advfront` variable such that it has two levels: `Strongly agree` and "`Agree"` combined into a new level called `agree` and the remaining levels (except `NA`s) combined into "`Not agree"`. Then, re-order the levels in the following order: `"Agree"` and `"Not agree"`. Finally, `count()` how many times each new level appears in the `advfront` variable.
 
+```{r}
+gss16_advfront <- gss16 %>%
+  mutate(advfront = recode(advfront, 
+                          "Strongly agree" = "Agree",
+                          .default = "Not agree")) %>%
+  mutate(advfront = factor(advfront, levels = c("Agree", "Not agree"))) %>%
+  count(advfront)
+```
+
+
 ```{marginfigure}
 You can do this in various ways. One option is to use the `str_detect()` function to detect the existence of words like liberal or conservative. Note that these sometimes show up with lowercase first letters and sometimes with upper case first letters. To detect either in the `str_detect()` function, you can use "[Ll]iberal" and "[Cc]onservative". But feel free to solve the problem however you like, this is just one option!
 ```
 
 2.  Combine the levels of the `polviews` variable such that levels that have the word "liberal" in them are lumped into a level called `"Liberal"` and those that have the word conservative in them are lumped into a level called `"Conservative"`. Then, re-order the levels in the following order: `"Conservative"` , `"Moderate"`, and `"Liberal"`. Finally, `count()` how many times each new level appears in the `polviews` variable.
+
+```{r}
+gss16_polviews_count <- gss16 %>%
+  mutate(polviews = recode(polviews, 
+                          "Strong Liberal" = "Liberal",
+                          "Liberal" = "Liberal",
+                          "Weak Liberal" = "Liberal",
+                          "Strong Conservative" = "Conservative",
+                          "Conservative" = "Conservative",
+                          "Weak Conservative" = "Conservative"
+                          )) %>%
+  mutate(polviews = factor(polviews, 
+                           levels = c("Conservative", "Moderate", "Liberal"))) %>%
+  count(polviews)
+```
+
 3.  Create a new data frame called `gss16_advfront` that includes the variables `advfront`, `educ`, `polviews`, and `wrkstat`. Then, use the `drop_na()` function to remove rows that contain `NA`s from this new data frame. Sample code is provided below.
 
 ```{r eval=FALSE}
 gss16_advfront <- gss16 %>%
-  select(___, ___, ___, ___) %>%
+  select(advfront, educ, polviews, wrkstat) %>%
   drop_na()
 ```
 
@@ -98,24 +126,25 @@ gss16_test  <- testing(gss16_split)
     -   `step_dummy()` to create dummy variables for `all_nominal()` variables that are predictors, i.e. `all_predictors()`
 
 ```{r eval=FALSE}
-gss16_rec_1 <- recipe(___ ~ ___, data = ___) %>%
-  step_other(wrkstat, threshold = ___, other = "Other") %>%
+gss16_rec_1 <- recipe(advfront ~ ., data = gss16_advfront) %>%
+  step_other(wrkstat, threshold = 0.10, other = "Other") %>%
   step_dummy(all_nominal(), -all_outcomes())
+
 ```
 
 6.  Specify a logistic regression model using `"glm"` as the engine. Name this specification `gss16_spec`. Sample code is provided below.
 
 ```{r eval=FALSE}
-gss16_spec <- ___() %>%
-  set_engine("___")
+gss16_spec <- logistic_reg() %>%
+  set_engine("glm")
 ```
 
 7.  Build a workflow that uses the recipe you defined (`gss16_rec`) and the model you specified (`gss16_spec`). Name this workflow `gss16_wflow_1`. Sample code is provided below.
 
 ```{r eval=FALSE}
 gss16_wflow_1 <- workflow() %>%
-  add_model(___) %>%
-  add_recipe(___)
+  add_model(gss16_spec) %>%
+  add_recipe(gss16_rec_1)
 ```
 
 8.  Perform 5-fold cross validation.
@@ -130,14 +159,15 @@ gss16_wflow_1 <- workflow() %>%
     -   report the average area under the ROC curve and the accuracy for all cross validation folds `collect_metrics()`
 
 ```{r eval=FALSE}
-set.seed(___)
-gss16_folds <- vfold_cv(___, v = ___)
+set.seed(123)  
+gss16_folds <- vfold_cv(gss16_rec, v = 5)  
 
 gss16_fit_rs_1 <- gss16_wflow_1 %>%
-  fit_resamples(___)
+  fit_resamples(resamples = gss16_folds)  
 
-collect_metrics(___, summarize = FALSE)
-collect_metrics(___)
+collect_metrics(gss16_fit_rs_1, summarize = FALSE)  
+collect_metrics(gss16_fit_rs_1)  
+
 ```
 
 9.  Now, try a different, simpler model: predict `advfront` from only `polviews` and `educ`.
@@ -148,7 +178,34 @@ collect_metrics(___)
     -   perform cross validation, and
     -   report the average area under the ROC curve and the accuracy for all cross validation folds `collect_metrics()`.
 
+```{r}
+
+log_reg <- logistic_reg()
+gss16_subset <- gss16 %>% select(polviews, educ, advfront) %>% drop_na()
+
+X <- gss16_subset %>% select(polviews, educ)
+y <- gss16_subset$advfront
+
+gss16_rec_2 <- recipe(advfront ~ polviews + educ, data = gss16_subset) %>%
+  step_dummy(all_nominal()) %>%
+  step_normalize(all_numeric_predictors())
+gss16_wflow_2 <- workflow() %>%
+  add_model(log_reg) %>%
+  add_recipe(gss16_rec_2)
+
+cv_results_2 <- gss16_wflow_2 %>%
+  fit_resamples(resamples = vfold_cv(X, v = 5))
+
+metrics_2 <- cv_results_2 %>%
+  collect_metrics()
+
+metrics_2 %>%
+  summarise(mean_roc_auc = mean(roc_auc), mean_accuracy = mean(accuracy))
+```
+
 10. Comment on which model performs better (one including `wrkstat`, model 1, or the one excluding `wrkstat`, model 2) on the training data based on area under the ROC curve.
+
+Excluding wrkstat from the model resulted in a higher average AUC on the training data.
 
 11. Fit both models to the testing data, plot the ROC curves for the predictions for both models, and calculate the areas under the ROC curve.
     Does your answer to the previous exercise hold for the testing data as well?
@@ -157,10 +214,29 @@ collect_metrics(___)
 
 ```{r eval=FALSE}
 gss16_fit_1 <- gss16_wflow_1 %>%
-  fit(gss16_train)
+  fit(data = )
 
 gss16_fit_2 <- gss16_wflow_2 %>%
-  fit(gss16_train)
+  fit(data = )
+
+predictions_1 <- predict(gss16_fit_1, new_data = gss16_test) %>%
+  bind_cols(gss16_test) 
+
+predictions_2 <- predict(gss16_fit_2, new_data = gss16_test) %>%
+  bind_cols(gss16_test) 
+
+roc_1 <- roc_curve(predictions_1, truth = advfront)
+roc_2 <- roc_curve(predictions_2, truth = advfront)
+
+auc_1 <- roc_auc(roc_1)
+auc_2 <- roc_auc(roc_2)
+
+plot(roc_1, col = "blue", main = "ROC Curves for Model 1 and Model 2", lwd = 2)
+plot(roc_2, col = "red", add = TRUE, lwd = 2)
+
+legend("bottomright", legend = c(paste("Model 1 (AUC =", round(auc_1, 2), ")"),
+                                 paste("Model 2 (AUC =", round(auc_2, 2), ")")),
+       col = c("blue", "red"), lwd = 2)
 ```
 
 🧶 ✅ ⬆️ Knit, *commit, and push your changes to GitHub with an appropriate commit message. Make sure to commit and push all changed files so that your Git pane is cleared up afterwards.*
@@ -175,8 +251,41 @@ The question is phrased as the following.
 Answers to this question are stored in the `harass5` variable in our dataset.
 
 12. Create a subset of the data that only contains `Yes` and `No` answers for the harassment question. How many responses chose each of these answers?
+
+```{r}
+harass_subset <- gss16 %>%
+  filter(harass5 %in% c("Yes", "No"))
+
+response_counts <- table(harass_subset$harass5)
+response_counts
+```
+1136=No 237=yes
+
 13. Describe how bootstrapping can be used to estimate the proportion of Americans who have been harassed by their superiors or co-workers at their job.
+
+Bootstrapping can help estimate the portion of Americans who faced harassment at work. By sampling from available responses and calculating the proportion of "Yes" answers, we can create a distribution to gauge how many Americans experienced harassment and how confident we are in that estimate.
+
 14. Calculate a 95% bootstrap confidence interval for the proportion of Americans who have been harassed by their superiors or co-workers at their job. Interpret this interval in context of the data.
+```{r}
+yes_count <- 237
+no_count <- 1136
+total_responses <- yes_count + no_count
+n_bootstrap <- 10000
+bootstrap_props <- numeric(n_bootstrap)
+
+set.seed(123)
+for (i in 1:n_bootstrap) {
+  bootstrap_sample <- sample(c(rep("Yes", yes_count), rep("No", no_count)), size = total_responses, replace = TRUE)
+  bootstrap_prop <- sum(bootstrap_sample == "Yes") / total_responses
+  bootstrap_props[i] <- bootstrap_prop
+}
+
+conf_interval <- quantile(bootstrap_props, c(0.025, 0.975))
+conf_interval
+
+```
 15. Would you expect a 90% confidence interval to be wider or narrower than the interval you calculated above? Explain your reasoning.
+
+A 90% confidence interval would be narrower than the 95% interval, as it covers a smaller range with slightly less certainty.
 
 🧶 ✅ ⬆️ Knit, *commit, and push your changes to GitHub with an appropriate commit message. Make sure to commit and push all changed files so that your Git pane is cleared up afterwards and review the md document on GitHub to make sure you're happy with the final state of your work.*
